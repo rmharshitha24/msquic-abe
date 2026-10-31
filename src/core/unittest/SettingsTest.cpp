@@ -129,6 +129,7 @@ TEST(SettingsTest, TestAllSettingsFieldsSet)
     SETTINGS_FEATURE_SET_TEST(OneWayDelayEnabled, QuicSettingsSettingsToInternal);
     SETTINGS_FEATURE_SET_TEST(NetStatsEventEnabled, QuicSettingsSettingsToInternal);
     SETTINGS_FEATURE_SET_TEST(StreamMultiReceiveEnabled, QuicSettingsSettingsToInternal);
+    SETTINGS_FEATURE_SET_TEST(AbeEnabled, QuicSettingsSettingsToInternal);
 
     // Bias field count on behalf of erstwhile ReservedRioEnabled
     FieldCount++;
@@ -220,7 +221,8 @@ TEST(SettingsTest, TestAllSettingsFieldsGet)
     SETTINGS_FEATURE_GET_TEST(OneWayDelayEnabled, QuicSettingsGetSettings);
     SETTINGS_FEATURE_GET_TEST(NetStatsEventEnabled, QuicSettingsGetSettings);
     SETTINGS_FEATURE_GET_TEST(StreamMultiReceiveEnabled, QuicSettingsGetSettings);
-
+    SETTINGS_FEATURE_GET_TEST(AbeEnabled, QuicSettingsGetSettings);
+    
     // Bias field count on behalf of erstwhile ReservedRioEnabled
     FieldCount++;
 

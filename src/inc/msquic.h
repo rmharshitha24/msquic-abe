@@ -820,9 +820,9 @@ typedef struct QUIC_SETTINGS {
             uint64_t XdpEnabled                             : 1;
             uint64_t QTIPEnabled                            : 1;
             uint64_t ReservedRioEnabled                     : 1;
-            uint64_t RESERVED                               : 18;
+            uint64_t RESERVED                               : 17;
 #else
-            uint64_t RESERVED                               : 26;
+            uint64_t RESERVED                               : 25;
 #endif
         } IsSet;
     };

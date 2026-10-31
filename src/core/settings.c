@@ -153,6 +153,9 @@ QuicSettingsSetDefault(
     if (!Settings->IsSet.HyStartEnabled) {
         Settings->HyStartEnabled = QUIC_DEFAULT_HYSTART_ENABLED;
     }
+    if (!Settings->IsSet.AbeEnabled) {
+        Settings->AbeEnabled = QUIC_DEFAULT_ABE_ENABLED;
+    }
     if (!Settings->IsSet.EncryptionOffloadAllowed) {
         Settings->EncryptionOffloadAllowed = QUIC_DEFAULT_ENCRYPTION_OFFLOAD_ALLOWED;
     }
@@ -326,6 +329,9 @@ QuicSettingsCopy(
     }
     if (!Destination->IsSet.HyStartEnabled) {
         Destination->HyStartEnabled = Source->HyStartEnabled;
+    }
+    if (!Destination->IsSet.AbeEnabled) {
+        Destination->AbeEnabled = Source->AbeEnabled;
     }
     if (!Destination->IsSet.EncryptionOffloadAllowed) {
         Destination->EncryptionOffloadAllowed = Source->EncryptionOffloadAllowed;
@@ -1377,6 +1383,16 @@ VersionSettingsFail:
             &ValueLen);
         Settings->EncryptionOffloadAllowed = !!Value;
     }
+    if (!Settings->IsSet.AbeEnabled) {
+        Value = QUIC_DEFAULT_ABE_ENABLED;
+        ValueLen = sizeof(Value);
+        CxPlatStorageReadValue(
+            Storage,
+            QUIC_SETTING_ABE_ENABLED,
+            (uint8_t*)&Value,
+            &ValueLen);
+        Settings->AbeEnabled = !!Value;
+    }
     if (!Settings->IsSet.ReliableResetEnabled) {
         Value = QUIC_DEFAULT_RELIABLE_RESET_ENABLED;
         ValueLen = sizeof(Value);
@@ -1877,6 +1893,14 @@ QuicSettingsSettingsToInternal(
 
     SETTING_COPY_FLAG_TO_INTERNAL_SIZED(
         Flags,
+        AbeEnabled,
+        QUIC_SETTINGS,
+        Settings,
+        SettingsSize,
+        InternalSettings);
+
+    SETTING_COPY_FLAG_TO_INTERNAL_SIZED(
+        Flags,
         EncryptionOffloadAllowed,
         QUIC_SETTINGS,
         Settings,
@@ -2060,6 +2084,14 @@ QuicSettingsGetSettings(
         *SettingsLength,
         InternalSettings);
 
+    SETTING_COPY_FLAG_FROM_INTERNAL_SIZED(
+        Flags,
+        AbeEnabled,
+        QUIC_SETTINGS,
+        Settings,
+        *SettingsLength,
+        InternalSettings);
+        
     SETTING_COPY_FLAG_FROM_INTERNAL_SIZED(
         Flags,
         EncryptionOffloadAllowed,
