@@ -810,6 +810,7 @@ typedef struct QUIC_SETTINGS {
             uint64_t StreamRecvWindowBidiLocalDefault       : 1;
             uint64_t StreamRecvWindowBidiRemoteDefault      : 1;
             uint64_t StreamRecvWindowUnidiDefault           : 1;
+            uint64_t AbeEnabled                             : 1;
 #ifdef QUIC_API_ENABLE_PREVIEW_FEATURES
             uint64_t EncryptionOffloadAllowed               : 1;
             uint64_t ReliableResetEnabled                   : 1;
@@ -864,6 +865,7 @@ typedef struct QUIC_SETTINGS {
         uint64_t Flags;
         struct {
             uint64_t HyStartEnabled            : 1;
+            uint64_t AbeEnabled                : 1;
 #ifdef QUIC_API_ENABLE_PREVIEW_FEATURES
             uint64_t EncryptionOffloadAllowed  : 1;
             uint64_t ReliableResetEnabled      : 1;
@@ -873,9 +875,9 @@ typedef struct QUIC_SETTINGS {
             uint64_t XdpEnabled                : 1;
             uint64_t QTIPEnabled               : 1;
             uint64_t ReservedRioEnabled        : 1;
-            uint64_t ReservedFlags             : 55;
+            uint64_t ReservedFlags             : 54;
 #else
-            uint64_t ReservedFlags             : 63;
+            uint64_t ReservedFlags             : 62;
 #endif
         };
     };
