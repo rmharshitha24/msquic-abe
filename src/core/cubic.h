@@ -41,6 +41,19 @@ typedef struct QUIC_CONGESTION_CONTROL_CUBIC {
     // TRUE if there has been at least one ACK.
     //
     BOOLEAN TimeOfLastAckValid : 1;
+    //
+    // TRUE if ABE is enabled. Populated by the settings integration.
+    //
+    BOOLEAN AbeEnabled;
+
+    //
+    // BETA selected for the current congestion epoch, scaled by 100.
+    //
+    uint8_t SelectedBetaX100;
+    //
+    // Previous beta, restored if a loss event is found to be spurious.
+    //
+    uint8_t PrevSelectedBetaX100;
 
     //
     // The size of the initial congestion window, in packets.
@@ -59,6 +72,8 @@ typedef struct QUIC_CONGESTION_CONTROL_CUBIC {
     uint32_t AimdWindow; // bytes
     uint32_t PrevAimdWindow; // bytes
     uint32_t AimdAccumulator; // bytes
+    uint32_t AimdAlphaRemainder;
+    uint32_t PrevAimdAlphaRemainder;
 
     //
     // The number of bytes considered to be still in the network.
