@@ -890,3 +890,52 @@ TEST(SettingsTest, AbeEnabledAppliesToDestination)
     ASSERT_EQ(1u, Destination.AbeEnabled);
     ASSERT_EQ(1u, Destination.IsSet.AbeEnabled);
 }
+
+TEST(SettingsTest, AbeEnabledDefaultsToFalse)
+{
+    QUIC_SETTINGS_INTERNAL Internal{};
+    QuicSettingsSetDefault(&Internal);
+    ASSERT_EQ(FALSE, Internal.AbeEnabled);
+}
+
+TEST(SettingsTest, AbeEnabledOnPublicToInternal)
+{
+    QUIC_SETTINGS Public{};
+    Public.IsSet.AbeEnabled = 1;
+    Public.AbeEnabled = 1;
+
+    QUIC_SETTINGS_INTERNAL Internal{};
+    ASSERT_EQ(
+        QUIC_STATUS_SUCCESS,
+        QuicSettingsSettingsToInternal(sizeof(Public), &Public, &Internal));
+    ASSERT_EQ(1u, Internal.IsSet.AbeEnabled);
+    ASSERT_EQ(1u, Internal.AbeEnabled);
+}
+
+TEST(SettingsTest, AbeEnabledOffPublicToInternal)
+{
+    QUIC_SETTINGS Public{};
+    Public.IsSet.AbeEnabled = 1;
+    Public.AbeEnabled = 0;
+
+    QUIC_SETTINGS_INTERNAL Internal{};
+    ASSERT_EQ(
+        QUIC_STATUS_SUCCESS,
+        QuicSettingsSettingsToInternal(sizeof(Public), &Public, &Internal));
+    ASSERT_EQ(1u, Internal.IsSet.AbeEnabled);
+    ASSERT_EQ(0u, Internal.AbeEnabled);
+}
+
+TEST(SettingsTest, AbeEnabledUnsetStaysFalse)
+{
+    QUIC_SETTINGS Public{};
+    Public.IsSet.HyStartEnabled = 1;
+    Public.HyStartEnabled = 1;
+
+    QUIC_SETTINGS_INTERNAL Internal{};
+    ASSERT_EQ(
+        QUIC_STATUS_SUCCESS,
+        QuicSettingsSettingsToInternal(sizeof(Public), &Public, &Internal));
+    ASSERT_EQ(0u, Internal.IsSet.AbeEnabled);
+    ASSERT_EQ(0u, Internal.AbeEnabled);
+}
