@@ -876,3 +876,17 @@ TEST(SettingsTest, GlobalExecutionConfigSetAndGet)
             Config));
 }
 #endif
+
+
+TEST(SettingsTest, AbeEnabledAppliesToDestination)
+{
+    QUIC_SETTINGS_INTERNAL Source{};
+    QUIC_SETTINGS_INTERNAL Destination{};
+
+    Source.IsSet.AbeEnabled = TRUE;
+    Source.AbeEnabled = TRUE;
+
+    ASSERT_TRUE(QuicSettingApply(&Destination, TRUE, TRUE, &Source));
+    ASSERT_EQ(1u, Destination.AbeEnabled);
+    ASSERT_EQ(1u, Destination.IsSet.AbeEnabled);
+}

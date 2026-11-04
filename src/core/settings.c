@@ -755,6 +755,10 @@ QuicSettingApply(
         Destination->StreamMultiReceiveEnabled = Source->StreamMultiReceiveEnabled;
         Destination->IsSet.StreamMultiReceiveEnabled = TRUE;
     }
+    if (Source->IsSet.AbeEnabled && (!Destination->IsSet.AbeEnabled || OverWrite)) {
+        Destination->AbeEnabled = Source->AbeEnabled;
+        Destination->IsSet.AbeEnabled = TRUE;
+    }
     return TRUE;
 }
 
