@@ -171,6 +171,7 @@ struct PerfClient {
             .SetSendBufferingEnabled(false)
             .SetCongestionControlAlgorithm(PerfDefaultCongestionControl)
             .SetHyStartEnabled(PerfDefaultHyStartEnabled)
+            .SetAbeEnabled(PerfDefaultAbeEnabled)
             .SetEcnEnabled(PerfDefaultEcnEnabled)
             .SetEncryptionOffloadAllowed(PerfDefaultQeoAllowed),
         CredentialConfig};
