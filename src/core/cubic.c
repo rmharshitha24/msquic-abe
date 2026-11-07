@@ -69,6 +69,101 @@ CubeRoot(
     return y;
 }
 
+//
+// Computes K, the time (in milliseconds) that the cubic function takes to grow
+// the window from the reduced window back up to WindowMax:
+//
+//   K = (WindowMax * (1 - BETA) / C) ^ (1/3)
+//
+// This is a pure function: BETA is passed in, scaled by 100 (70 means 0.70).
+//
+// Scaling: the original expression uses 10x multiples for both BETA and C, i.e.
+//   (10 - 10*BETA) / (10*C)  ==  (1 - BETA) / C.
+// With BETA in hundredths, (100 - 100*BETA) is 10x larger, so the divisor is
+// also multiplied by 10: TEN_TIMES_C_CUBIC * 10. The units of K are therefore
+// unchanged, and BetaHundredths == 70 gives exactly (3 << 9) / 4 per packet,
+// the same integer as the original expression (30 << 9) / 40.
+//
+// The order of operations (divide by MSS first, multiply, shift by 9, divide
+// by C, cube root, to milliseconds, shift by 3) is kept identical to the
+// original so that rounding is identical. Intermediates are 64-bit to avoid
+// overflow for very large windows; the value handed to CubeRoot is saturated
+// to 32 bits.
+//
+_IRQL_requires_max_(DISPATCH_LEVEL)
+uint32_t
+CubicComputeK(
+    _In_ uint32_t WindowMax,
+    _In_ uint16_t DatagramPayloadLength,
+    _In_ uint32_t BetaHundredths
+    )
+{
+    CXPLAT_DBG_ASSERT(DatagramPayloadLength != 0);
+    CXPLAT_DBG_ASSERT(BetaHundredths > 0 && BetaHundredths < 100);
+
+    uint64_t Radicand =
+        (((uint64_t)(WindowMax / DatagramPayloadLength) *
+          (100 - BetaHundredths)) << 9) /
+        (TEN_TIMES_C_CUBIC * 10);
+
+    //
+    // CubeRoot takes 32 bits. For BETA = 0.7 this always fits (up to a ~4 GB
+    // window), but a very small BETA with a huge window could exceed it, so
+    // saturate instead of silently truncating.
+    //
+    if (Radicand > UINT32_MAX) {
+        Radicand = UINT32_MAX;
+    }
+
+    uint32_t K = CubeRoot((uint32_t)Radicand);
+    K = S_TO_MS(K);
+    K >>= 3;
+    return K;
+}
+
+//
+// Computes the cubic window in bytes:
+//
+//   W_cubic(t) = C * (t - K)^3 + WindowMax
+//
+// where t = TimeInCongAvoidUs + SmoothedRtt (the RFC uses W_cubic(t + RTT)).
+// KCubicMs must be the K computed from the same WindowMax. May return a
+// negative value if the 64-bit arithmetic overflowed; the caller handles that.
+//
+_IRQL_requires_max_(DISPATCH_LEVEL)
+int64_t
+CubicComputeWindow(
+    _In_ uint64_t TimeInCongAvoidUs,
+    _In_ uint32_t KCubicMs,
+    _In_ uint64_t SmoothedRttUs,
+    _In_ uint16_t DatagramPayloadLength,
+    _In_ uint32_t WindowMax
+    )
+{
+    //
+    // Here we have 30 bits' worth of right shift. This is to convert
+    // millisec^3 to sec^3. Each ten bit's worth of shift approximates
+    // a division by 1000. The order of operations is chosen to strike
+    // a balance between rounding error and overflow protection.
+    // With C = 0.4 and MTU=0xffff, we are safe from overflow for
+    // DeltaT < ~2.5M (about 30min).
+    //
+    int64_t DeltaT =
+        US_TO_MS(
+            (int64_t)TimeInCongAvoidUs -
+            (int64_t)MS_TO_US(KCubicMs) +
+            (int64_t)SmoothedRttUs
+        );
+    if (DeltaT > 2500000) {
+        DeltaT = 2500000;
+    }
+
+    return
+        ((((DeltaT * DeltaT) >> 10) * DeltaT *
+         (int64_t)(DatagramPayloadLength * TEN_TIMES_C_CUBIC / 10)) >> 20) +
+        (int64_t)WindowMax;
+}
+
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void
 QuicConnLogCubic(
@@ -377,12 +472,14 @@ CubicCongestionControlOnCongestionEvent(
         // by 9 before the division and then right-shifting the result by 3
         // (since 2^9 = 2^3^3).
         //
+        // See CubicComputeK. BETA is hard-coded to 70 (0.7) until the selected
+        // BETA field is integrated here.
+        //
         Cubic->KCubic =
-            CubeRoot(
-                (Cubic->WindowMax / DatagramPayloadLength * (10 - TEN_TIMES_BETA_CUBIC) << 9) /
-                TEN_TIMES_C_CUBIC);
-        Cubic->KCubic = S_TO_MS(Cubic->KCubic);
-        Cubic->KCubic >>= 3;
+            CubicComputeK(
+                Cubic->WindowMax,
+                DatagramPayloadLength,
+                10 * TEN_TIMES_BETA_CUBIC);
 
         CubicCongestionHyStartChangeState(Cc, HYSTART_DONE);
         Cubic->SlowStartThreshold =
@@ -633,31 +730,16 @@ CubicCongestionControlOnDataAcknowledged(
         // W_cubic(t) = C*(t-K)^3 + WindowMax.
         // (t in seconds; window sizes in MSS)
         //
-        // NB: The RFC uses W_cubic(t+RTT) rather than W_cubic(t), so we
-        // add RTT to DeltaT.
+        // NB: The RFC uses W_cubic(t+RTT) rather than W_cubic(t), so
+        // CubicComputeWindow adds RTT to DeltaT.
         //
-        // Here we have 30 bits' worth of right shift. This is to convert
-        // millisec^3 to sec^3. Each ten bit's worth of shift approximates
-        // a division by 1000. The order of operations is chosen to strike
-        // a balance between rounding error and overflow protection.
-        // With C = 0.4 and MTU=0xffff, we are safe from overflow for
-        // DeltaT < ~2.5M (about 30min).
-        //
-
-        int64_t DeltaT =
-            US_TO_MS(
-                (int64_t)TimeInCongAvoidUs -
-                (int64_t)MS_TO_US(Cubic->KCubic) +
-                (int64_t)AckEvent->SmoothedRtt
-            );
-        if (DeltaT > 2500000) {
-            DeltaT = 2500000;
-        }
-
         int64_t CubicWindow =
-            ((((DeltaT * DeltaT) >> 10) * DeltaT *
-             (int64_t)(DatagramPayloadLength * TEN_TIMES_C_CUBIC / 10)) >> 20) +
-            (int64_t)Cubic->WindowMax;
+            CubicComputeWindow(
+                TimeInCongAvoidUs,
+                Cubic->KCubic,
+                AckEvent->SmoothedRtt,
+                DatagramPayloadLength,
+                Cubic->WindowMax);
 
         if (CubicWindow < 0) {
             //

@@ -546,6 +546,8 @@ CXPLAT_STATIC_ASSERT(
 //
 #define QUIC_DEFAULT_HYSTART_ENABLED                FALSE
 
+#define QUIC_DEFAULT_ABE_ENABLED                    FALSE
+
 //
 // The default settings for allowing QEO support.
 //
@@ -683,6 +685,7 @@ CXPLAT_STATIC_ASSERT(
 #define QUIC_SETTING_GREASE_QUIC_BIT_ENABLED        "GreaseQuicBitEnabled"
 #define QUIC_SETTING_ECN_ENABLED                    "EcnEnabled"
 #define QUIC_SETTING_HYSTART_ENABLED                "HyStartEnabled"
+#define QUIC_SETTING_ABE_ENABLED                    "AbeEnabled"
 #define QUIC_SETTING_ENCRYPTION_OFFLOAD_ALLOWED     "EncryptionOffloadAllowed"
 #define QUIC_SETTING_RELIABLE_RESET_ENABLED         "ReliableResetEnabled"
 #define QUIC_SETTING_XDP_ENABLED                    "XdpEnabled"

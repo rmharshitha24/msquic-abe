@@ -5,6 +5,7 @@ set(SOURCES
     main.cpp
     BbrTest.cpp
     CubicTest.cpp
+    CubicGoldenTest.cpp
     FrameTest.cpp
     PacketNumberTest.cpp
     PathTest.cpp
