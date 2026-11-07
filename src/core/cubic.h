@@ -116,6 +116,27 @@ typedef struct QUIC_CONGESTION_CONTROL_CUBIC {
 
 } QUIC_CONGESTION_CONTROL_CUBIC;
 
+//
+// Pure CUBIC math helpers. BetaHundredths is BETA scaled by 100 (70 = 0.70).
+//
+_IRQL_requires_max_(DISPATCH_LEVEL)
+uint32_t
+CubicComputeK(
+    _In_ uint32_t WindowMax,
+    _In_ uint16_t DatagramPayloadLength,
+    _In_ uint32_t BetaHundredths
+    );
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+int64_t
+CubicComputeWindow(
+    _In_ uint64_t TimeInCongAvoidUs,
+    _In_ uint32_t KCubicMs,
+    _In_ uint64_t SmoothedRttUs,
+    _In_ uint16_t DatagramPayloadLength,
+    _In_ uint32_t WindowMax
+    );
+
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void
 CubicCongestionControlInitialize(

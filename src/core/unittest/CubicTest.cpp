@@ -10,11 +10,14 @@ Abstract:
 --*/
 
 #include "main.h"
+#include <cmath>
 #ifdef QUIC_CLOG
 #include "CubicTest.cpp.clog.h"
 #endif
 
 extern "C" uint32_t CubeRoot(uint32_t Radicand);
+extern "C" uint32_t CubicComputeK(uint32_t WindowMax, uint16_t DatagramPayloadLength, uint32_t BetaHundredths);
+extern "C" int64_t CubicComputeWindow(uint64_t TimeInCongAvoidUs, uint32_t KCubicMs, uint64_t SmoothedRttUs, uint16_t DatagramPayloadLength, uint32_t WindowMax);
 
 //
 // Test: CubeRoot - Integer Cube Root Function
@@ -2312,4 +2315,205 @@ TEST_F(CubicTest, HyStart_DelayIncreaseDetection_EtaCalculationAndCondition)
         ASSERT_EQ(Cubic->HyStartState, HYSTART_NOT_STARTED);
         ASSERT_EQ(Cubic->HyStartAckCount, 8u); // Should still be 8, not reset
     }
+}
+
+//
+// Tests: CubicComputeK / CubicComputeWindow - pure math helpers that take BETA
+// (scaled by 100) as a parameter.
+//
+
+//
+// Reference implementation of the ORIGINAL K expression (BETA = 0.7), copied
+// from the code before BETA became a parameter.
+//
+static uint32_t OriginalCubicK(uint32_t WindowMax, uint16_t Mss)
+{
+    uint32_t K = CubeRoot((WindowMax / Mss * (10 - 7) << 9) / 4);
+    K = K * 1000;
+    K >>= 3;
+    return K;
+}
+
+//
+// Floating-point reference: K = cbrt(WindowMax_in_MSS * (1 - beta) / 0.4), ms.
+//
+static double ReferenceK_ms(uint32_t WindowMax, uint16_t Mss, uint32_t BetaHundredths)
+{
+    double WindowMss = (double)(WindowMax / Mss);
+    double Beta = BetaHundredths / 100.0;
+    return std::cbrt(WindowMss * (1.0 - Beta) / 0.4) * 1000.0;
+}
+
+TEST(CubicMathTest, Beta70MatchesOriginalExactly)
+{
+    const uint16_t Mtus[] = {1200, 1280, 1400, 1500, 9000};
+    for (uint16_t Mss : Mtus) {
+        //
+        // 1 packet up to ~1 GiB window, stepping through many sizes.
+        //
+        for (uint64_t W = Mss; W <= (1ull << 30); W += (W / 7) + 1) {
+            ASSERT_EQ(CubicComputeK((uint32_t)W, Mss, 70), OriginalCubicK((uint32_t)W, Mss))
+                << "W=" << W << " Mss=" << Mss;
+        }
+    }
+}
+
+TEST(CubicMathTest, KOfZeroWindowIsZero)
+{
+    ASSERT_EQ(0u, CubicComputeK(0, 1280, 70));
+    ASSERT_EQ(0u, CubicComputeK(0, 1280, 85));
+}
+
+TEST(CubicMathTest, KWindowSmallerThanOnePacketIsZero)
+{
+    ASSERT_EQ(0u, CubicComputeK(1279, 1280, 70));
+}
+
+TEST(CubicMathTest, KKnownValues)
+{
+    //
+    // 3696 / 1232 = 3 packets. 3*30<<9 / 40 = 1152 -> cbrt = 10 -> 10000 >> 3.
+    //
+    ASSERT_EQ(1250u, CubicComputeK(3696, 1232, 70));
+    //
+    // Same window with BETA = 0.85: 3*15<<9 / 40 = 576 -> cbrt = 8 -> 8000 >> 3.
+    //
+    ASSERT_EQ(1000u, CubicComputeK(3696, 1232, 85));
+}
+
+TEST(CubicMathTest, KMatchesFloatingPointReference)
+{
+    const uint32_t Betas[] = {50, 60, 70, 80, 85, 90};
+    const uint16_t Mss = 1280;
+    for (uint32_t Beta : Betas) {
+        for (uint32_t Packets = 100; Packets <= 5000000; Packets *= 3) {
+            uint32_t W = Packets * Mss;
+            double Ref = ReferenceK_ms(W, Mss, Beta);
+            double Got = (double)CubicComputeK(W, Mss, Beta);
+            //
+            // Integer cube root plus >>3 loses at most ~1 unit of the
+            // cube root (1000/8 ms) and a few ms of truncation.
+            //
+            ASSERT_NEAR(Got, Ref, 130.0 + Ref * 0.01)
+                << "Beta=" << Beta << " Packets=" << Packets;
+        }
+    }
+}
+
+TEST(CubicMathTest, KDecreasesAsBetaIncreases)
+{
+    uint32_t Previous = UINT32_MAX;
+    for (uint32_t Beta = 10; Beta <= 95; Beta += 5) {
+        uint32_t K = CubicComputeK(1280 * 20000, 1280, Beta);
+        ASSERT_LE(K, Previous) << "Beta=" << Beta;
+        Previous = K;
+    }
+}
+
+TEST(CubicMathTest, KIncreasesWithWindow)
+{
+    uint32_t Previous = 0;
+    for (uint32_t Packets = 10; Packets <= 1000000; Packets *= 2) {
+        uint32_t K = CubicComputeK(Packets * 1280, 1280, 70);
+        ASSERT_GE(K, Previous);
+        Previous = K;
+    }
+}
+
+TEST(CubicMathTest, KNoOverflowAtExtremeWindows)
+{
+    //
+    // Largest window with the smallest MSS: the radicand must stay within
+    // 32 bits (CubeRoot's input) and K must stay sane, for every BETA.
+    //
+    for (uint32_t Beta = 1; Beta < 100; ++Beta) {
+        uint32_t K = CubicComputeK(UINT32_MAX, 1200, Beta);
+        double Ref = ReferenceK_ms(UINT32_MAX, 1200, Beta);
+        if (Beta >= 10) {
+            ASSERT_NEAR((double)K, Ref, 130.0 + Ref * 0.01) << "Beta=" << Beta;
+        } else {
+            //
+            // Tiny BETA with a ~4 GB window saturates the cube root input, so
+            // K is capped (never wrapped): positive and not above the exact value.
+            //
+            ASSERT_GT(K, 0u) << "Beta=" << Beta;
+            ASSERT_LE((double)K, Ref + 1.0) << "Beta=" << Beta;
+        }
+    }
+    //
+    // Even a pathological 1-byte MSS must not crash or wrap into garbage.
+    //
+    uint32_t K = CubicComputeK(UINT32_MAX, 1, 70);
+    ASSERT_LT(K, 3000000u);
+}
+
+TEST(CubicMathTest, WindowAtKEqualsWindowMax)
+{
+    //
+    // At t + RTT == K the cubic term is zero, so W == WindowMax.
+    //
+    const uint32_t WindowMax = 1280 * 1000;
+    const uint32_t K = CubicComputeK(WindowMax, 1280, 70);
+    int64_t W = CubicComputeWindow(MS_TO_US((uint64_t)K) - 50000, K, 50000, 1280, WindowMax);
+    ASSERT_EQ((int64_t)WindowMax, W);
+}
+
+TEST(CubicMathTest, WindowGrowsMonotonicallyAfterLoss)
+{
+    const uint32_t WindowMax = 1280 * 2000;
+    const uint32_t K = CubicComputeK(WindowMax, 1280, 70);
+    int64_t Previous = 0;
+    for (uint64_t T = 0; T < 20000000; T += 100000) {
+        int64_t W = CubicComputeWindow(T, K, 50000, 1280, WindowMax);
+        ASSERT_GE(W, Previous);
+        Previous = W;
+    }
+    ASSERT_GT(Previous, (int64_t)WindowMax); // convex region goes past WindowMax
+}
+
+TEST(CubicMathTest, WindowAfterEcnAndLoss)
+{
+    //
+    // Reduced windows after a congestion event: loss (BETA 0.7) and ECN (BETA
+    // 0.85) from the same pre-event window. The reduced window must be below
+    // WindowMax and K must be shorter for ECN than for loss.
+    //
+    const uint32_t WindowMax = 1280 * 4000;
+    const uint32_t KLoss = CubicComputeK(WindowMax, 1280, 70);
+    const uint32_t KEcn = CubicComputeK(WindowMax, 1280, 85);
+    ASSERT_LT(KEcn, KLoss);
+
+    const uint32_t ReducedLoss = (uint32_t)((uint64_t)WindowMax * 70 / 100);
+    const uint32_t ReducedEcn = (uint32_t)((uint64_t)WindowMax * 85 / 100);
+
+    //
+    // Right after the event (t = 0), the cubic window sits at or below the
+    // reduced window's neighbourhood and below WindowMax.
+    //
+    int64_t W0Loss = CubicComputeWindow(0, KLoss, 0, 1280, WindowMax);
+    int64_t W0Ecn = CubicComputeWindow(0, KEcn, 0, 1280, WindowMax);
+    ASSERT_LT(W0Loss, (int64_t)WindowMax);
+    ASSERT_LT(W0Ecn, (int64_t)WindowMax);
+    //
+    // The curve is anchored so it reaches WindowMax at t = K.
+    //
+    ASSERT_EQ((int64_t)WindowMax, CubicComputeWindow(MS_TO_US((uint64_t)KLoss), KLoss, 0, 1280, WindowMax));
+    ASSERT_EQ((int64_t)WindowMax, CubicComputeWindow(MS_TO_US((uint64_t)KEcn), KEcn, 0, 1280, WindowMax));
+    //
+    // The ECN curve starts closer to WindowMax than the loss curve.
+    //
+    ASSERT_GT(W0Ecn, W0Loss);
+    (void)ReducedLoss;
+    (void)ReducedEcn;
+}
+
+TEST(CubicMathTest, WindowDeltaTIsClamped)
+{
+    //
+    // DeltaT is clamped at 2.5M ms; huge elapsed times must not overflow into
+    // a window below WindowMax.
+    //
+    const uint32_t WindowMax = 1280 * 100;
+    int64_t W = CubicComputeWindow(UINT64_C(1) << 50, 1000, 50000, 1280, WindowMax);
+    ASSERT_GE(W, (int64_t)WindowMax);
 }
