@@ -23,6 +23,14 @@ Abstract:
 #define TEN_TIMES_C_CUBIC 4
 
 //
+// Loss BETA from RFC 8312 and ECN BETA from RFC 8511.
+// 100x multiples for integer arithmetic.
+//
+#define ABE_BETA_LOSS_X100 70
+#define ABE_BETA_ECN_X100  85
+#define ABE_BETA_SCALE    100
+
+//
 // Shifting nth root algorithm.
 //
 // This works sort of like long division: we look at the radicand in aligned
@@ -152,7 +160,8 @@ CubicCongestionControlReset(
     )
 {
     QUIC_CONGESTION_CONTROL_CUBIC* Cubic = &Cc->Cubic;
-
+    Cubic->SelectedBetaX100 = ABE_BETA_LOSS_X100;
+    Cubic->AimdAlphaRemainder = 0;
     QUIC_CONNECTION* Connection = QuicCongestionControlGetConnection(Cc);
     const uint16_t DatagramPayloadLength =
         QuicPathGetDatagramPayloadSize(QuicPathGetActive(&Connection->Paths));
@@ -304,8 +313,21 @@ CubicCongestionControlOnCongestionEvent(
         Cubic->PrevSlowStartThreshold = Cubic->SlowStartThreshold;
         Cubic->PrevCongestionWindow = Cubic->CongestionWindow;
         Cubic->PrevAimdWindow = Cubic->AimdWindow;
+        Cubic->PrevSelectedBetaX100 = Cubic->SelectedBetaX100;
+        Cubic->PrevAimdAlphaRemainder = Cubic->AimdAlphaRemainder;
     }
-
+    //
+    // Use ABE's ECN beta only during congestion avoidance.
+    //
+    Cubic->SelectedBetaX100 =
+        Ecn &&
+        Cubic->AbeEnabled &&
+        !IsPersistentCongestion &&
+        Cubic->CongestionWindow >= Cubic->SlowStartThreshold
+            ? ABE_BETA_ECN_X100
+            : ABE_BETA_LOSS_X100;
+    Cubic->AimdAlphaRemainder = 0;
+    const uint32_t CongestionWindowBefore = Cubic->CongestionWindow;
     if (IsPersistentCongestion && !Cubic->IsInPersistentCongestion) {
 
         CXPLAT_DBG_ASSERT(!Cubic->IsInPersistentCongestion);
@@ -340,7 +362,9 @@ CubicCongestionControlOnCongestionEvent(
             // Fast convergence.
             //
             Cubic->WindowLastMax = Cubic->WindowMax;
-            Cubic->WindowMax = Cubic->WindowMax * (10 + TEN_TIMES_BETA_CUBIC) / 20;
+            Cubic->WindowMax =(uint32_t)((uint64_t)Cubic->WindowMax *
+                            (ABE_BETA_SCALE + Cubic->SelectedBetaX100) /
+                            (2 * ABE_BETA_SCALE));
         } else {
             Cubic->WindowLastMax = Cubic->WindowMax;
         }
@@ -366,8 +390,16 @@ CubicCongestionControlOnCongestionEvent(
         Cubic->AimdWindow =
             CXPLAT_MAX(
                 (uint32_t)DatagramPayloadLength * QUIC_PERSISTENT_CONGESTION_WINDOW_PACKETS,
-                Cubic->CongestionWindow * TEN_TIMES_BETA_CUBIC / 10);
+                (uint32_t)((uint64_t)Cubic->CongestionWindow * Cubic->SelectedBetaX100 / ABE_BETA_SCALE));
     }
+    QuicTraceLogConnInfo(
+        CubicAbeReduction,
+        Connection,
+        "CUBIC reduction: Ecn=%hhu BetaX100=%hhu CwndBefore=%u CwndAfter=%u",
+        Ecn,
+        Cubic->SelectedBetaX100,
+        CongestionWindowBefore,
+        Cubic->CongestionWindow);
 }
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
@@ -652,10 +684,33 @@ CubicCongestionControlOnDataAcknowledged(
         //
         CXPLAT_STATIC_ASSERT(TEN_TIMES_BETA_CUBIC == 7, "TEN_TIMES_BETA_CUBIC must be 7 for simplified calculation.");
         if (Cubic->AimdWindow < Cubic->WindowPrior) {
-            Cubic->AimdAccumulator += BytesAcked / 2;
-        } else {
-            Cubic->AimdAccumulator += BytesAcked;
-        }
+    if (Cubic->AbeEnabled) {
+        //
+        // Alpha = 3 * (1 - beta) / (1 + beta).
+        // Carry fractional credit across ACKs.
+        //
+        const uint32_t Denominator =
+            ABE_BETA_SCALE + Cubic->SelectedBetaX100;
+
+        const uint64_t Credit =
+            (uint64_t)BytesAcked * 3 *
+            (ABE_BETA_SCALE - Cubic->SelectedBetaX100) +
+            Cubic->AimdAlphaRemainder;
+
+        Cubic->AimdAccumulator +=
+            (uint32_t)(Credit / Denominator);
+
+        Cubic->AimdAlphaRemainder =
+            (uint32_t)(Credit % Denominator);
+    } else {
+        //
+        // Preserve the original calculation when ABE is disabled.
+        //
+        Cubic->AimdAccumulator += BytesAcked / 2;
+    }
+} else {
+    Cubic->AimdAccumulator += BytesAcked;
+}
         if (Cubic->AimdAccumulator > Cubic->AimdWindow) {
             Cubic->AimdWindow += DatagramPayloadLength;
             Cubic->AimdAccumulator -= Cubic->AimdWindow;
@@ -818,7 +873,8 @@ CubicCongestionControlOnSpuriousCongestionEvent(
     Cubic->SlowStartThreshold = Cubic->PrevSlowStartThreshold;
     Cubic->CongestionWindow = Cubic->PrevCongestionWindow;
     Cubic->AimdWindow = Cubic->PrevAimdWindow;
-
+    Cubic->SelectedBetaX100 = Cubic->PrevSelectedBetaX100;
+    Cubic->AimdAlphaRemainder = Cubic->PrevAimdAlphaRemainder;
     Cubic->IsInRecovery = FALSE;
     Cubic->HasHadCongestionEvent = FALSE;
 
@@ -938,6 +994,10 @@ CubicCongestionControlInitialize(
     Cubic->HyStartRoundEnd = Connection->Send.NextPacketNumber;
     Cubic->HyStartState = HYSTART_NOT_STARTED;
     Cubic->CWndSlowStartGrowthDivisor = 1;
+    Cubic->AbeEnabled = FALSE;
+    Cubic->SelectedBetaX100 = ABE_BETA_LOSS_X100;
+    Cubic->AimdAlphaRemainder = 0;
+    Cubic->PrevAimdAlphaRemainder = 0;
     CubicCongestionHyStartResetPerRttRound(Cubic);
 
     QuicConnLogOutFlowStats(Connection);
