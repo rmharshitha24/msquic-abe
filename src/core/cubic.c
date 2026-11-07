@@ -472,14 +472,12 @@ CubicCongestionControlOnCongestionEvent(
         // by 9 before the division and then right-shifting the result by 3
         // (since 2^9 = 2^3^3).
         //
-        // See CubicComputeK. BETA is hard-coded to 70 (0.7) until the selected
-        // BETA field is integrated here.
+        // Compute K using the beta selected for this congestion event.
         //
-        Cubic->KCubic =
-            CubicComputeK(
-                Cubic->WindowMax,
-                DatagramPayloadLength,
-                10 * TEN_TIMES_BETA_CUBIC);
+        Cubic->KCubic = CubicComputeK(
+            Cubic->WindowMax,
+            DatagramPayloadLength,
+            Cubic->SelectedBetaX100);
 
         CubicCongestionHyStartChangeState(Cc, HYSTART_DONE);
         Cubic->SlowStartThreshold =
@@ -1076,7 +1074,7 @@ CubicCongestionControlInitialize(
     Cubic->HyStartRoundEnd = Connection->Send.NextPacketNumber;
     Cubic->HyStartState = HYSTART_NOT_STARTED;
     Cubic->CWndSlowStartGrowthDivisor = 1;
-    Cubic->AbeEnabled = FALSE;
+    Cubic->AbeEnabled = Settings->AbeEnabled;
     Cubic->SelectedBetaX100 = ABE_BETA_LOSS_X100;
     Cubic->AimdAlphaRemainder = 0;
     Cubic->PrevAimdAlphaRemainder = 0;
