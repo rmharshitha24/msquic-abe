@@ -14,6 +14,10 @@
 #include "cubic.c.clog.h.lttng.h"
 #endif
 #include <lttng/tracepoint-event.h>
+#ifndef _clog_MACRO_QuicTraceLogConnInfo
+#define _clog_MACRO_QuicTraceLogConnInfo  1
+#define QuicTraceLogConnInfo(a, ...) _clog_CAT(_clog_ARGN_SELECTOR(__VA_ARGS__), _clog_CAT(_,a(#a, __VA_ARGS__)))
+#endif
 #ifndef _clog_MACRO_QuicTraceLogConnVerbose
 #define _clog_MACRO_QuicTraceLogConnVerbose  1
 #define QuicTraceLogConnVerbose(a, ...) _clog_CAT(_clog_ARGN_SELECTOR(__VA_ARGS__), _clog_CAT(_,a(#a, __VA_ARGS__)))
@@ -25,6 +29,32 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+/*----------------------------------------------------------
+// Decoder Ring for CubicAbeReduction
+// [conn][%p] CUBIC reduction: Ecn=%hhu BetaX100=%hhu CwndBefore=%u CwndAfter=%u
+// QuicTraceLogConnInfo(
+        CubicAbeReduction,
+        Connection,
+        "CUBIC reduction: Ecn=%hhu BetaX100=%hhu CwndBefore=%u CwndAfter=%u",
+        Ecn,
+        Cubic->SelectedBetaX100,
+        CongestionWindowBefore,
+        Cubic->CongestionWindow);
+// arg1 = arg1 = Connection = arg1
+// arg3 = arg3 = Ecn = arg3
+// arg4 = arg4 = Cubic->SelectedBetaX100 = arg4
+// arg5 = arg5 = CongestionWindowBefore = arg5
+// arg6 = arg6 = Cubic->CongestionWindow = arg6
+----------------------------------------------------------*/
+#ifndef _clog_7_ARGS_TRACE_CubicAbeReduction
+#define _clog_7_ARGS_TRACE_CubicAbeReduction(uniqueId, arg1, encoded_arg_string, arg3, arg4, arg5, arg6)\
+tracepoint(CLOG_CUBIC_C, CubicAbeReduction , arg1, arg3, arg4, arg5, arg6);\
+
+#endif
+
+
+
+
 /*----------------------------------------------------------
 // Decoder Ring for IndicateDataAcked
 // [conn][%p] Indicating QUIC_CONNECTION_EVENT_NETWORK_STATISTICS [BytesInFlight=%u,PostedBytes=%llu,IdealBytes=%llu,SmoothedRTT=%llu,CongestionWindow=%u,Bandwidth=%llu]

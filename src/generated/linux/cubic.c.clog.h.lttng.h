@@ -2,6 +2,41 @@
 
 
 /*----------------------------------------------------------
+// Decoder Ring for CubicAbeReduction
+// [conn][%p] CUBIC reduction: Ecn=%hhu BetaX100=%hhu CwndBefore=%u CwndAfter=%u
+// QuicTraceLogConnInfo(
+        CubicAbeReduction,
+        Connection,
+        "CUBIC reduction: Ecn=%hhu BetaX100=%hhu CwndBefore=%u CwndAfter=%u",
+        Ecn,
+        Cubic->SelectedBetaX100,
+        CongestionWindowBefore,
+        Cubic->CongestionWindow);
+// arg1 = arg1 = Connection = arg1
+// arg3 = arg3 = Ecn = arg3
+// arg4 = arg4 = Cubic->SelectedBetaX100 = arg4
+// arg5 = arg5 = CongestionWindowBefore = arg5
+// arg6 = arg6 = Cubic->CongestionWindow = arg6
+----------------------------------------------------------*/
+TRACEPOINT_EVENT(CLOG_CUBIC_C, CubicAbeReduction,
+    TP_ARGS(
+        const void *, arg1,
+        unsigned char, arg3,
+        unsigned char, arg4,
+        unsigned int, arg5,
+        unsigned int, arg6), 
+    TP_FIELDS(
+        ctf_integer_hex(uint64_t, arg1, (uint64_t)arg1)
+        ctf_integer(unsigned char, arg3, arg3)
+        ctf_integer(unsigned char, arg4, arg4)
+        ctf_integer(unsigned int, arg5, arg5)
+        ctf_integer(unsigned int, arg6, arg6)
+    )
+)
+
+
+
+/*----------------------------------------------------------
 // Decoder Ring for IndicateDataAcked
 // [conn][%p] Indicating QUIC_CONNECTION_EVENT_NETWORK_STATISTICS [BytesInFlight=%u,PostedBytes=%llu,IdealBytes=%llu,SmoothedRTT=%llu,CongestionWindow=%u,Bandwidth=%llu]
 // QuicTraceLogConnVerbose(

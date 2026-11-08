@@ -2411,6 +2411,34 @@
       ],
       "macroName": "QuicTraceLogConnInfo"
     },
+    "CubicAbeReduction": {
+      "ModuleProperites": {},
+      "TraceString": "[conn][%p] CUBIC reduction: Ecn=%hhu BetaX100=%hhu CwndBefore=%u CwndAfter=%u",
+      "UniqueId": "CubicAbeReduction",
+      "splitArgs": [
+        {
+          "DefinationEncoding": "p",
+          "MacroVariableName": "arg1"
+        },
+        {
+          "DefinationEncoding": "hhu",
+          "MacroVariableName": "arg3"
+        },
+        {
+          "DefinationEncoding": "hhu",
+          "MacroVariableName": "arg4"
+        },
+        {
+          "DefinationEncoding": "u",
+          "MacroVariableName": "arg5"
+        },
+        {
+          "DefinationEncoding": "u",
+          "MacroVariableName": "arg6"
+        }
+      ],
+      "macroName": "QuicTraceLogConnInfo"
+    },
     "CustomCertValidationPending": {
       "ModuleProperites": {},
       "TraceString": "[conn][%p] Custom cert validation is pending",
@@ -13869,6 +13897,11 @@
         "UniquenessHash": "ab194a75-9835-d231-9336-628397e466cc",
         "TraceID": "CryptoStateDiscard",
         "EncodingString": "[conn][%p] TLS state no longer needed"
+      },
+      {
+        "UniquenessHash": "58fbcc47-7047-eaf2-f530-e60fb805509b",
+        "TraceID": "CubicAbeReduction",
+        "EncodingString": "[conn][%p] CUBIC reduction: Ecn=%hhu BetaX100=%hhu CwndBefore=%u CwndAfter=%u"
       },
       {
         "UniquenessHash": "cfc6e146-0966-e783-5344-2ea4afd4d692",
