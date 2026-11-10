@@ -15,6 +15,7 @@ Abstract:
 #endif
 
 #include "cubic.h"
+#include <stdio.h>
 
 //
 // BETA and C from RFC8312. 10x multiples for integer arithmetic.
@@ -412,13 +413,17 @@ CubicCongestionControlOnCongestionEvent(
         Cubic->PrevAimdAlphaRemainder = Cubic->AimdAlphaRemainder;
     }
     //
-    // Use ABE's ECN beta only during congestion avoidance.
+    // Use ABE's ECN beta when ABE is enabled, except for persistent congestion.
     //
+    fprintf(stderr, "ABE=%u ECN=%u cwnd=%u threshold=%u\n",
+    (unsigned)Cubic->AbeEnabled,
+    (unsigned)Ecn,
+    Cubic->CongestionWindow,
+    Cubic->SlowStartThreshold);
     Cubic->SelectedBetaX100 =
         Ecn &&
         Cubic->AbeEnabled &&
-        !IsPersistentCongestion &&
-        Cubic->CongestionWindow >= Cubic->SlowStartThreshold
+        !IsPersistentCongestion 
             ? ABE_BETA_ECN_X100
             : ABE_BETA_LOSS_X100;
     Cubic->AimdAlphaRemainder = 0;

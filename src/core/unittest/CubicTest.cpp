@@ -2517,3 +2517,249 @@ TEST(CubicMathTest, WindowDeltaTIsClamped)
     int64_t W = CubicComputeWindow(UINT64_C(1) << 50, 1000, 50000, 1280, WindowMax);
     ASSERT_GE(W, (int64_t)WindowMax);
 }
+class AbeSettingsIntegrationTest :
+    public CubicTest,
+    public ::testing::WithParamInterface<int> {};
+
+TEST_P(AbeSettingsIntegrationTest, PublicSettingControlsEcnBackoff)
+{
+    // -1 = default/unset, 0 = explicit OFF, 1 = explicit ON.
+    const int Mode = GetParam();
+    const bool Enabled = Mode == 1;
+
+    QUIC_SETTINGS Public{};
+    if (Mode != -1) {
+        Public.IsSet.AbeEnabled = TRUE;
+        Public.AbeEnabled = Enabled;
+    }
+
+    QUIC_SETTINGS_INTERNAL Converted{};
+    ASSERT_EQ(
+        QUIC_STATUS_SUCCESS,
+        QuicSettingsSettingsToInternal(
+            sizeof(Public), &Public, &Converted));
+
+    // Initialize defaults and apply the converted public setting.
+    QuicSettingsSetDefault(&Settings);
+    ASSERT_TRUE(QuicSettingApply(
+        &Settings, TRUE, TRUE, &Converted));
+
+    InitializeDefaultWithRtt(20, false);
+
+    ASSERT_EQ(Enabled, Cubic->AbeEnabled != FALSE);
+
+    // Model congestion avoidance before the first congestion event.
+    const uint32_t Before = Cubic->CongestionWindow;
+    Cubic->SlowStartThreshold = Before;
+    CC->QuicCongestionControlOnDataSent(CC, Before);
+
+    QUIC_ECN_EVENT Ecn{};
+    Ecn.LargestPacketNumberAcked = 10;
+    Ecn.LargestSentPacketNumber = 15;
+
+    CC->QuicCongestionControlOnEcn(CC, &Ecn);
+
+    const uint32_t Beta = Enabled ? 85 : 70;
+    const uint32_t Expected =
+        (uint32_t)((uint64_t)Before * Beta / 100);
+
+    EXPECT_EQ(Beta, Cubic->SelectedBetaX100);
+    EXPECT_EQ(Expected, Cubic->CongestionWindow);
+    EXPECT_EQ(Expected, Cubic->SlowStartThreshold);
+    EXPECT_EQ(Expected, Cubic->AimdWindow);
+
+    EXPECT_EQ(
+        CubicComputeK(
+            Cubic->WindowMax,
+            (uint16_t)(1280 - kIPv6UdpOverhead),
+            Beta),
+        Cubic->KCubic);
+
+    EXPECT_EQ(1u, Connection.Stats.Send.EcnCongestionCount);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    AbeModes,
+    AbeSettingsIntegrationTest,
+    ::testing::Values(-1, 0, 1));
+
+    class AbeResponseTest : public CubicTest {
+protected:
+    void SetUp() override
+    {
+        Settings.AbeEnabled = TRUE;
+        InitializeDefaultWithRtt(20, false);
+    }
+
+    void EnterCa()
+    {
+        Cubic->SlowStartThreshold = Cubic->CongestionWindow;
+    }
+
+    void Ecn(uint64_t Acked = 10, uint64_t Sent = 20)
+    {
+        QUIC_ECN_EVENT Event{};
+        Event.LargestPacketNumberAcked = Acked;
+        Event.LargestSentPacketNumber = Sent;
+        CC->QuicCongestionControlOnEcn(CC, &Event);
+    }
+
+    void Loss(
+        uint64_t Lost = 10,
+        uint64_t Sent = 20,
+        BOOLEAN Persistent = FALSE)
+    {
+        QUIC_LOSS_EVENT Event =
+            MakeLossEvent(0, Lost, Sent, Persistent);
+        CC->QuicCongestionControlOnDataLost(CC, &Event);
+    }
+};
+TEST_F(AbeResponseTest, LossUsesBeta70)
+{
+    EnterCa();
+    const uint32_t Before = Cubic->CongestionWindow;
+
+    Loss();
+
+    EXPECT_EQ(70u, Cubic->SelectedBetaX100);
+    EXPECT_EQ(Before * 70 / 100, Cubic->CongestionWindow);
+    EXPECT_EQ(Cubic->CongestionWindow, Cubic->SlowStartThreshold);
+    EXPECT_EQ(Cubic->CongestionWindow, Cubic->AimdWindow);
+}
+TEST_F(AbeResponseTest, EcnFastConvergenceUsesBeta85)
+{
+    EnterCa();
+    const uint32_t Before = Cubic->CongestionWindow;
+    Cubic->WindowLastMax = Before + 10000;
+
+    Ecn();
+
+    EXPECT_EQ(85u, Cubic->SelectedBetaX100);
+    EXPECT_EQ(Before, Cubic->WindowLastMax);
+    EXPECT_EQ(
+        (uint32_t)((uint64_t)Before * 185 / 200),
+        Cubic->WindowMax);
+    EXPECT_EQ(Before * 85 / 100, Cubic->CongestionWindow);
+}
+
+TEST_F(AbeResponseTest, LossFastConvergenceUsesBeta70)
+{
+    EnterCa();
+    const uint32_t Before = Cubic->CongestionWindow;
+    Cubic->WindowLastMax = Before + 10000;
+
+    Loss();
+
+    EXPECT_EQ(70u, Cubic->SelectedBetaX100);
+    EXPECT_EQ(Before, Cubic->WindowLastMax);
+    EXPECT_EQ(
+        (uint32_t)((uint64_t)Before * 170 / 200),
+        Cubic->WindowMax);
+}
+TEST_F(AbeResponseTest, RecoveryRejectsOldLossAndEcn)
+{
+    EnterCa();
+    Ecn(10, 20);
+
+    ASSERT_EQ(85u, Cubic->SelectedBetaX100);
+    const uint32_t Window = Cubic->CongestionWindow;
+    const uint32_t K = Cubic->KCubic;
+
+    // Both events refer to packets at/before the recovery boundary.
+    Loss(15, 20);
+    Ecn(15, 20);
+
+    EXPECT_EQ(Window, Cubic->CongestionWindow);
+    EXPECT_EQ(K, Cubic->KCubic);
+    EXPECT_EQ(85u, Cubic->SelectedBetaX100);
+    EXPECT_EQ(1u, Connection.Stats.Send.EcnCongestionCount);
+
+    // A loss beyond the boundary is a fresh congestion event.
+    Loss(21, 30);
+
+    EXPECT_EQ(70u, Cubic->SelectedBetaX100);
+    EXPECT_EQ(Window * 70 / 100, Cubic->CongestionWindow);
+}
+TEST_F(AbeResponseTest, PersistentCongestionKeepsExistingCollapse)
+{
+    EnterCa();
+    const uint32_t Before = Cubic->CongestionWindow;
+    const uint32_t Payload = 1280 - kIPv6UdpOverhead;
+
+    Loss(10, 20, TRUE);
+
+    EXPECT_TRUE(Cubic->IsInPersistentCongestion);
+    EXPECT_EQ(70u, Cubic->SelectedBetaX100);
+    EXPECT_EQ(
+        Payload * QUIC_PERSISTENT_CONGESTION_WINDOW_PACKETS,
+        Cubic->CongestionWindow);
+    EXPECT_EQ(Before * 70 / 100, Cubic->SlowStartThreshold);
+    EXPECT_EQ(Before * 70 / 100, Cubic->AimdWindow);
+    EXPECT_EQ(0u, Cubic->KCubic);
+    EXPECT_EQ(1u, Connection.Stats.Send.PersistentCongestionCount);
+}
+TEST_F(AbeResponseTest, SpuriousLossRestoresAbeState)
+{
+    EnterCa();
+    Ecn(10, 20);
+
+    Cubic->AimdAlphaRemainder = 123;
+    const uint32_t Before = Cubic->CongestionWindow;
+    const uint32_t KBefore = Cubic->KCubic;
+
+    // New loss saves the preceding ECN state.
+    Loss(21, 30);
+    ASSERT_EQ(70u, Cubic->SelectedBetaX100);
+    ASSERT_EQ(0u, Cubic->AimdAlphaRemainder);
+
+    CC->QuicCongestionControlOnSpuriousCongestionEvent(CC);
+EXPECT_FALSE(Cubic->IsInRecovery);
+    EXPECT_EQ(85u, Cubic->SelectedBetaX100);
+    EXPECT_EQ(123u, Cubic->AimdAlphaRemainder);
+    EXPECT_EQ(Before, Cubic->CongestionWindow);
+    EXPECT_EQ(KBefore, Cubic->KCubic);
+}
+TEST_F(AbeResponseTest, AimdGrowthCarriesFractionalCredit)
+{
+    EnterCongestionAvoidance();
+
+    Cubic->SelectedBetaX100 = 85;
+    Cubic->AimdWindow = 100000;
+    Cubic->WindowPrior = 200000;
+    Cubic->AimdAccumulator = 0;
+    Cubic->AimdAlphaRemainder = 0;
+
+    // Keep enough outstanding data for both ACKs.
+    CC->QuicCongestionControlOnDataSent(CC, 1000);
+
+    QUIC_ACK_EVENT First =
+        MakeAckEvent(1051000, 21, 30, 101);
+    CC->QuicCongestionControlOnDataAcknowledged(CC, &First);
+
+    // Credit = 101 * 3 * (100 - 85) = 4545.
+    EXPECT_EQ(4545u / 185, Cubic->AimdAccumulator);
+    EXPECT_EQ(4545u % 185, Cubic->AimdAlphaRemainder);
+
+    QUIC_ACK_EVENT Second =
+        MakeAckEvent(1052000, 22, 30, 101);
+    CC->QuicCongestionControlOnDataAcknowledged(CC, &Second);
+
+    EXPECT_EQ(9090u / 185, Cubic->AimdAccumulator);
+    EXPECT_EQ(9090u % 185, Cubic->AimdAlphaRemainder);
+}
+TEST_F(AbeResponseTest, SlowStartEcnUsesBeta85)
+{
+    ASSERT_TRUE(Cubic->AbeEnabled);
+    ASSERT_LT(
+        Cubic->CongestionWindow,
+        Cubic->SlowStartThreshold);
+
+    const uint32_t Before = Cubic->CongestionWindow;
+
+    Ecn();
+
+    EXPECT_EQ(85u, Cubic->SelectedBetaX100);
+    EXPECT_EQ(Before * 85 / 100, Cubic->CongestionWindow);
+    EXPECT_EQ(Cubic->CongestionWindow, Cubic->SlowStartThreshold);
+    EXPECT_EQ(Cubic->CongestionWindow, Cubic->AimdWindow);
+}

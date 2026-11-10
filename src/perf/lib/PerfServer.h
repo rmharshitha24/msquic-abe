@@ -182,6 +182,7 @@ private:
             .SetServerResumptionLevel(QUIC_SERVER_RESUME_AND_ZERORTT)
             .SetCongestionControlAlgorithm(PerfDefaultCongestionControl)
             .SetEcnEnabled(PerfDefaultEcnEnabled)
+            .SetAbeEnabled(PerfDefaultAbeEnabled)
             .SetEncryptionOffloadAllowed(PerfDefaultQeoAllowed)
             .SetOneWayDelayEnabled(true)};
     MsQuicListener Listener {Registration, CleanUpManual, ListenerCallbackStatic, this};

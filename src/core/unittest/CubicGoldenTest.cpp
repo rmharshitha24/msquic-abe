@@ -34,7 +34,7 @@ constexpr uint64_t kRttUs = 50000;
 // then commit. Until it has values, the test is skipped.
 //
 const std::vector<uint32_t> kExpectedWindows = {
-        12320,
+    12320,
     12320,
     12320,
     12320,
@@ -96,49 +96,21 @@ const std::vector<uint32_t> kExpectedWindows = {
     12320,
     8624,
     8624,
-    8624,
-    8754,
-    8863,
-    8956,
-    9035,
-    9103,
-    9161,
-    9211,
-    9254,
-    9291,
-    9323,
-    9351,
-    9375,
-    9396,
-    9414,
-    9856,
-    11088,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    8624,
-    8624,
-    8624,
-    8624,
-    8624,
-    8624,
-    8624,
-    8624,
-    8624,
-    8624,
-    8624,
-    8624,
-    8624,
-    9856,
+    8760,
+    8881,
+    8990,
+    9089,
+    9179,
+    9262,
+    9339,
+    9411,
+    9478,
+    9541,
+    9601,
+    9658,
+    9712,
+    9764,
+    9814,
     11088,
     12320,
     12320,
@@ -153,30 +125,58 @@ const std::vector<uint32_t> kExpectedWindows = {
     12320,
     12320,
     12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
-    12320,
+    8624,
+    8624,
+    8624,
+    8624,
+    8624,
+    8624,
+    8624,
+    8624,
+    8624,
     8624,
     8624,
     8624,
     9856,
     11088,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    12320,
+    8624,
+    8624,
+    9856,
+    11088,
+    12320,
     12320,
     12320,
     12320,
@@ -258,6 +258,8 @@ TEST(CubicGoldenTest, AckLossEcnSequence)
 
     QUIC_SETTINGS_INTERNAL Settings{};
     Settings.InitialWindowPackets = 10;
+    Settings.SendIdleTimeoutMs = 1000;
+Settings.AbeEnabled = FALSE;
 
     QUIC_CONGESTION_CONTROL* Cc = &Connection.CongestionControl;
     CubicCongestionControlInitialize(Cc, &Settings);
@@ -267,18 +269,26 @@ TEST(CubicGoldenTest, AckLossEcnSequence)
     uint64_t Pn = 0;
 
     auto AckN = [&](int N) {
-        for (int i = 0; i < N; ++i) {
-            QUIC_ACK_EVENT Ack = MakeAck(Now, Pn);
-            Cc->QuicCongestionControlOnDataAcknowledged(Cc, &Ack);
-            Windows.push_back(Cc->Cubic.CongestionWindow);
-            ++Pn;
-        }
-    };
-    auto Loss = [&](uint64_t LostPn) {
-        QUIC_LOSS_EVENT Ev = MakeLoss(LostPn);
-        Cc->QuicCongestionControlOnDataLost(Cc, &Ev);
+    for (int i = 0; i < N; ++i) {
+        Connection.Send.NextPacketNumber = Pn + 1;
+        Cc->QuicCongestionControlOnDataSent(Cc, kAckBytes);
+
+        QUIC_ACK_EVENT Ack = MakeAck(Now, Pn);
+        Cc->QuicCongestionControlOnDataAcknowledged(Cc, &Ack);
         Windows.push_back(Cc->Cubic.CongestionWindow);
-    };
+        ++Pn;
+    }
+};
+    auto Loss = [&](uint64_t LostPn) {
+    Connection.Send.NextPacketNumber = LostPn + 1;
+    Cc->QuicCongestionControlOnDataSent(Cc, kAckBytes);
+
+    QUIC_LOSS_EVENT Ev = MakeLoss(LostPn);
+    Cc->QuicCongestionControlOnDataLost(Cc, &Ev);
+    Windows.push_back(Cc->Cubic.CongestionWindow);
+
+    Pn = LostPn + 1;
+};
     auto Ecn = [&](uint64_t EcnPn) {
         QUIC_ECN_EVENT Ev = MakeEcn(EcnPn);
         Cc->QuicCongestionControlOnEcn(Cc, &Ev);
