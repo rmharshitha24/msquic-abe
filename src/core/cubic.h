@@ -30,6 +30,7 @@ typedef struct QUIC_CONGESTION_CONTROL_CUBIC {
     // to recover from it.
     //
     BOOLEAN IsInRecovery : 1;
+    BOOLEAN LossRollbackEligible : 1;
 
     //
     // This flag indicates a persistent congestion event occurred and CC is

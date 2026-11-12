@@ -270,6 +270,7 @@ CubicCongestionControlReset(
     Cubic->HasHadCongestionEvent = FALSE;
     Cubic->CongestionWindow = DatagramPayloadLength * Cubic->InitialWindowPackets;
     Cubic->BytesInFlightMax = Cubic->CongestionWindow / 2;
+    Cubic->LossRollbackEligible = FALSE;
     Cubic->LastSendAllowance = 0;
     if (FullReset) {
         Cubic->BytesInFlight = 0;
@@ -411,7 +412,10 @@ CubicCongestionControlOnCongestionEvent(
         Cubic->PrevAimdWindow = Cubic->AimdWindow;
         Cubic->PrevSelectedBetaX100 = Cubic->SelectedBetaX100;
         Cubic->PrevAimdAlphaRemainder = Cubic->AimdAlphaRemainder;
-    }
+        Cubic->LossRollbackEligible = TRUE;
+    }else {
+    Cubic->LossRollbackEligible = FALSE;
+}
     //
     // Use ABE's ECN beta when ABE is enabled, except for persistent congestion.
     //
@@ -423,7 +427,8 @@ CubicCongestionControlOnCongestionEvent(
     Cubic->SelectedBetaX100 =
         Ecn &&
         Cubic->AbeEnabled &&
-        !IsPersistentCongestion 
+        !IsPersistentCongestion &&
+        Cubic->CongestionWindow >= Cubic->SlowStartThreshold
             ? ABE_BETA_ECN_X100
             : ABE_BETA_LOSS_X100;
     Cubic->AimdAlphaRemainder = 0;
@@ -769,38 +774,23 @@ CubicCongestionControlOnDataAcknowledged(
         //
         CXPLAT_STATIC_ASSERT(TEN_TIMES_BETA_CUBIC == 7, "TEN_TIMES_BETA_CUBIC must be 7 for simplified calculation.");
         if (Cubic->AimdWindow < Cubic->WindowPrior) {
-    if (Cubic->AbeEnabled) {
-        //
-        // Alpha = 3 * (1 - beta) / (1 + beta).
-        // Carry fractional credit across ACKs.
-        //
-        const uint32_t Denominator =
-            ABE_BETA_SCALE + Cubic->SelectedBetaX100;
-
-        const uint64_t Credit =
-            (uint64_t)BytesAcked * 3 *
-            (ABE_BETA_SCALE - Cubic->SelectedBetaX100) +
-            Cubic->AimdAlphaRemainder;
-
-        Cubic->AimdAccumulator +=
-            (uint32_t)(Credit / Denominator);
-
-        Cubic->AimdAlphaRemainder =
-            (uint32_t)(Credit % Denominator);
-    } else {
-        //
-        // Preserve the original calculation when ABE is disabled.
-        //
-        Cubic->AimdAccumulator += BytesAcked / 2;
-    }
-} else {
-    Cubic->AimdAccumulator += BytesAcked;
-}
+            Cubic->AimdAccumulator += BytesAcked / 2;
+        } else {
+            Cubic->AimdAccumulator += BytesAcked;
+        }
         if (Cubic->AimdAccumulator > Cubic->AimdWindow) {
             Cubic->AimdWindow += DatagramPayloadLength;
             Cubic->AimdAccumulator -= Cubic->AimdWindow;
         }
-
+        fprintf(stderr,
+    "CUBIC_GROWTH t_us=%llu K_ms=%u cwnd=%u "
+    "aimd=%u cubic=%lld reno=%u\n",
+    (unsigned long long)TimeInCongAvoidUs,
+    Cubic->KCubic,
+    Cubic->CongestionWindow,
+    Cubic->AimdWindow,
+    (long long)CubicWindow,
+    (unsigned)(Cubic->AimdWindow > CubicWindow));
         if (Cubic->AimdWindow > CubicWindow) {
             //
             // Reno-Friendly region.
@@ -936,9 +926,9 @@ CubicCongestionControlOnSpuriousCongestionEvent(
 {
     QUIC_CONGESTION_CONTROL_CUBIC* Cubic = &Cc->Cubic;
 
-    if (!Cubic->IsInRecovery) {
-        return FALSE;
-    }
+    if (!Cubic->IsInRecovery || !Cubic->LossRollbackEligible) {
+    return FALSE;
+}
 
     QUIC_CONNECTION* Connection = QuicCongestionControlGetConnection(Cc);
     BOOLEAN PreviousCanSendState = QuicCongestionControlCanSend(Cc);
@@ -962,6 +952,7 @@ CubicCongestionControlOnSpuriousCongestionEvent(
     Cubic->AimdAlphaRemainder = Cubic->PrevAimdAlphaRemainder;
     Cubic->IsInRecovery = FALSE;
     Cubic->HasHadCongestionEvent = FALSE;
+    Cubic->LossRollbackEligible = FALSE;
 
     BOOLEAN Result = CubicCongestionControlUpdateBlockedState(Cc, PreviousCanSendState);
     QuicConnLogCubic(Connection);
